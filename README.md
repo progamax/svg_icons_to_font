@@ -1,15 +1,33 @@
 # svg_icons_to_font
 
-Un package **100 % Dart** (avec CLI et API programmable) qui convertit un dossier d'icônes `.svg` en une police OpenType (`.otf` / CFF) et génère automatiquement la classe Dart contenant les `IconData` pour Flutter.
+A **100% pure Dart** package and CLI tool that converts a directory of `.svg` icons into an OpenType (`.otf` / CFF) font file and generates the corresponding Flutter `IconData` class.
 
-## Fonctionnalités
+## Features
 
-- **Pur Dart** : aucune dépendance système externe (`fontforge`, `node`, `python` ne sont pas requis).
-- **Support SVG complet** : `<path>` (`M`, `L`, `H`, `V`, `C`, `S`, `Q`, `T`, `A`, `Z`), `<rect>`, `<circle>`, `<ellipse>`, `<polygon>`, `<polyline>`, `<line>`.
-- **Génération OpenType `.otf`** : tables SFNT `CFF `, `OS/2`, `cmap` (formats 4 et 12), `head`, `hhea`, `hmtx`, `maxp`, `name`, `post`.
-- **Classe Flutter prête à l'emploi** : constantes `static const IconData` en `camelCase` + dictionnaire `values`.
+- **Pure Dart**: Zero external system dependencies (`fontforge`, `node`, `python` are not required).
+- **Comprehensive SVG support**:
+  - Elements: `<path>` (`M`, `L`, `H`, `V`, `C`, `S`, `Q`, `T`, `A`, `Z`), `<rect>`, `<circle>`, `<ellipse>`, `<polygon>`, `<polyline>`, `<line>`.
+  - Nested `<g>` transforms (`translate`, `scale`, `rotate`, `skewX`, `skewY`, `matrix`).
+  - Automatic stroke-to-contour expansion (`stroke`, `stroke-width`, `stroke-linecap`, `stroke-linejoin`) and invisible bounding-box filtering.
+- **OpenType `.otf` generation**: Builds SFNT tables (`CFF `, `OS/2`, `cmap` formats 4 & 12, `head`, `hhea`, `hmtx`, `maxp`, `name`, `post`).
+- **Ready-to-use Flutter class**: Generates `static const IconData` constants in `camelCase` plus a `values` lookup map.
 
-## Utilisation en CLI
+## Installation
+
+Add `svg_icons_to_font` to your `dev_dependencies` in `pubspec.yaml`:
+
+```yaml
+dev_dependencies:
+  svg_icons_to_font: ^0.1.0
+```
+
+Or activate it globally as a CLI tool:
+
+```bash
+dart pub global activate svg_icons_to_font
+```
+
+## CLI Usage
 
 ```bash
 dart run svg_icons_to_font \
@@ -20,7 +38,23 @@ dart run svg_icons_to_font \
   --class-name AppIcons
 ```
 
-## Utilisation via l'API Dart
+### CLI Options
+
+| Option | Abbr | Default | Description |
+| :--- | :---: | :--- | :--- |
+| `--input` | `-i` | *(required)* | Input directory containing `.svg` icon files |
+| `--font-output` | `-f` | `assets/fonts/app_icons.otf` | Output path for the generated `.otf` font file |
+| `--dart-output` | `-d` | `lib/app_icons.dart` | Output path for the generated Flutter Dart class |
+| `--font-family` | `-n` | `AppIcons` | Font family name embedded in `.otf` and `IconData` |
+| `--class-name` | `-c` | `AppIcons` | Name of the generated Dart class |
+| `--font-package` | `-p` | `null` | Optional Flutter package name for `IconData.fontPackage` |
+| `--start-codepoint` | | `0xE000` | Starting Unicode Private Use Area codepoint |
+| `--units-per-em` | | `1000` | Font units per EM square |
+| `--ascent` | | `850` | Typographic ascent in font units |
+| `--descent` | | `-150` | Typographic descent in font units |
+| `--[no-]normalize` | | `true` | Scale and center icons within the EM square |
+
+## Programmatic Usage
 
 ```dart
 import 'package:svg_icons_to_font/svg_icons_to_font.dart';
@@ -36,12 +70,14 @@ Future<void> main() async {
   );
 
   final result = await SvgIconsToFontGenerator.generate(config);
-  print('Police générée : ${result.fontOutputPath}');
-  print('Fichier Dart   : ${result.dartOutputPath}');
+  print('Generated font: ${result.fontOutputPath}');
+  print('Generated Dart: ${result.dartOutputPath}');
 }
 ```
 
-## Déclaration dans le `pubspec.yaml` de votre application Flutter
+## Registering the Font in Flutter
+
+Add the generated `.otf` file to the `flutter.fonts` section of your app's `pubspec.yaml`:
 
 ```yaml
 flutter:
@@ -49,4 +85,10 @@ flutter:
     - family: AppIcons
       fonts:
         - asset: assets/fonts/app_icons.otf
+```
+
+Then use the generated icons anywhere in your Flutter widgets:
+
+```dart
+Icon(AppIcons.home)
 ```
