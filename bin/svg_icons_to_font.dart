@@ -45,6 +45,21 @@ Future<void> main(List<String> arguments) async {
       help: 'Starting Unicode codepoint (hex or decimal, e.g. 0xE000).',
       defaultsTo: '0xE000',
     )
+    ..addOption(
+      'units-per-em',
+      help: 'Font units per EM square (default 1000).',
+      defaultsTo: '1000',
+    )
+    ..addOption(
+      'ascent',
+      help: 'Typographic ascent in font units (default 850).',
+      defaultsTo: '850',
+    )
+    ..addOption(
+      'descent',
+      help: 'Typographic descent in font units (default -150).',
+      defaultsTo: '-150',
+    )
     ..addFlag(
       'normalize',
       help: 'Scale and center icons within the EM square.',
@@ -71,9 +86,15 @@ Future<void> main(List<String> arguments) async {
     final className = results['class-name'] as String;
     final fontPackage = results['font-package'] as String?;
     final startCodePointRaw = results['start-codepoint'] as String;
+    final unitsPerEmRaw = results['units-per-em'] as String;
+    final ascentRaw = results['ascent'] as String;
+    final descentRaw = results['descent'] as String;
     final normalize = results['normalize'] as bool;
 
     final startCodePoint = int.parse(startCodePointRaw);
+    final unitsPerEm = int.parse(unitsPerEmRaw);
+    final ascent = int.parse(ascentRaw);
+    final descent = int.parse(descentRaw);
 
     final config = FontGeneratorConfig(
       inputDir: inputDir,
@@ -83,6 +104,9 @@ Future<void> main(List<String> arguments) async {
       className: className,
       fontPackage: fontPackage,
       startCodePoint: startCodePoint,
+      unitsPerEm: unitsPerEm,
+      ascent: ascent,
+      descent: descent,
       normalize: normalize,
     );
 
@@ -92,10 +116,16 @@ Future<void> main(List<String> arguments) async {
       '  • OTF font : ${result.fontOutputPath} (${result.fontBytes.length} bytes)\n'
       '  • Dart file: ${result.dartOutputPath}',
     );
-  } on Object catch (e) {
-    stderr.writeln('Error: $e\n');
+  } on ArgParserException catch (e) {
+    stderr.writeln('Error: ${e.message}\n');
     _printUsage(parser);
     exitCode = 64;
+  } on FormatException catch (e) {
+    stderr.writeln('Error: ${e.message}\n');
+    exitCode = 64;
+  } on Object catch (e) {
+    stderr.writeln('Error: $e');
+    exitCode = 1;
   }
 }
 
