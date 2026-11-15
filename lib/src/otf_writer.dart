@@ -91,20 +91,26 @@ class OtfWriter {
     IconGlyph glyph,
     FontGeneratorConfig config,
   ) {
-    final vb = glyph.svg.viewBox;
+    final rawVb = glyph.svg.viewBox;
+    final vbWidth = rawVb.width > 0 ? rawVb.width : 24.0;
+    final vbHeight = rawVb.height > 0 ? rawVb.height : 24.0;
     final em = config.unitsPerEm.toDouble();
+
     final scale = config.normalize
-        ? math.min(em / vb.width, em / vb.height)
-        : (em / vb.height);
+        ? math.min(em / vbWidth, em / vbHeight)
+        : (em / vbHeight);
 
-    final scaledWidth = vb.width * scale;
-    final scaledHeight = vb.height * scale;
-    final offsetX = (em - scaledWidth) / 2.0;
-    final offsetY = (em - scaledHeight) / 2.0;
+    final scaledWidth = vbWidth * scale;
+    final scaledHeight = vbHeight * scale;
+    final offsetX = config.normalize ? (em - scaledWidth) / 2.0 : 0.0;
+    final offsetY = config.normalize ? (em - scaledHeight) / 2.0 : 0.0;
+    final advanceWidth = config.normalize
+        ? config.unitsPerEm
+        : scaledWidth.round().clamp(1, 0xFFFF);
 
-    double mapX(double svgX) => (svgX - vb.minX) * scale + offsetX;
+    double mapX(double svgX) => (svgX - rawVb.minX) * scale + offsetX;
     double mapY(double svgY) =>
-        config.ascent - ((svgY - vb.minY) * scale + offsetY);
+        config.ascent - ((svgY - rawVb.minY) * scale + offsetY);
 
     final charstringBytes = <int>[];
     var curX = 0;
@@ -115,11 +121,35 @@ class OtfWriter {
     var maxX = double.negativeInfinity;
     var maxY = double.negativeInfinity;
 
-    void trackPoint(int x, int y) {
-      if (x < minX) minX = x.toDouble();
-      if (y < minY) minY = y.toDouble();
-      if (x > maxX) maxX = x.toDouble();
-      if (y > maxY) maxY = y.toDouble();
+    void trackCoord(double x, double y) {
+      if (x < minX) minX = x;
+      if (y < minY) minY = y;
+      if (x > maxX) maxX = x;
+      if (y > maxY) maxY = y;
+    }
+
+    void trackCubicBounds(
+      double x0,
+      double y0,
+      double x1,
+      double y1,
+      double x2,
+      double y2,
+      double x3,
+      double y3,
+    ) {
+      trackCoord(x0, y0);
+      trackCoord(x3, y3);
+      for (final t in _cubicExtremaT(x0, x1, x2, x3)) {
+        final xt = _evalCubic1D(x0, x1, x2, x3, t);
+        final yt = _evalCubic1D(y0, y1, y2, y3, t);
+        trackCoord(xt, yt);
+      }
+      for (final t in _cubicExtremaT(y0, y1, y2, y3)) {
+        final xt = _evalCubic1D(x0, x1, x2, x3, t);
+        final yt = _evalCubic1D(y0, y1, y2, y3, t);
+        trackCoord(xt, yt);
+      }
     }
 
     for (final cmd in glyph.svg.commands) {
@@ -134,7 +164,7 @@ class OtfWriter {
           charstringBytes.add(21); // rmoveto
           curX = tx;
           curY = ty;
-          trackPoint(tx, ty);
+          trackCoord(tx.toDouble(), ty.toDouble());
 
         case PathCommandType.lineTo:
           final tx = mapX(cmd.x).round();
@@ -147,10 +177,12 @@ class OtfWriter {
             charstringBytes.add(5); // rlineto
             curX = tx;
             curY = ty;
-            trackPoint(tx, ty);
+            trackCoord(tx.toDouble(), ty.toDouble());
           }
 
         case PathCommandType.cubicTo:
+          final x0 = curX.toDouble();
+          final y0 = curY.toDouble();
           final x1 = mapX(cmd.x1).round();
           final y1 = mapY(cmd.y1).round();
           final x2 = mapX(cmd.x2).round();
@@ -165,19 +197,33 @@ class OtfWriter {
           final dx3 = x - x2;
           final dy3 = y - y2;
 
-          _encodeCharstringInt(charstringBytes, dx1);
-          _encodeCharstringInt(charstringBytes, dy1);
-          _encodeCharstringInt(charstringBytes, dx2);
-          _encodeCharstringInt(charstringBytes, dy2);
-          _encodeCharstringInt(charstringBytes, dx3);
-          _encodeCharstringInt(charstringBytes, dy3);
-          charstringBytes.add(8); // rrcurveto
+          if (dx1 != 0 ||
+              dy1 != 0 ||
+              dx2 != 0 ||
+              dy2 != 0 ||
+              dx3 != 0 ||
+              dy3 != 0) {
+            _encodeCharstringInt(charstringBytes, dx1);
+            _encodeCharstringInt(charstringBytes, dy1);
+            _encodeCharstringInt(charstringBytes, dx2);
+            _encodeCharstringInt(charstringBytes, dy2);
+            _encodeCharstringInt(charstringBytes, dx3);
+            _encodeCharstringInt(charstringBytes, dy3);
+            charstringBytes.add(8); // rrcurveto
 
-          curX = x;
-          curY = y;
-          trackPoint(x1, y1);
-          trackPoint(x2, y2);
-          trackPoint(x, y);
+            curX = x;
+            curY = y;
+            trackCubicBounds(
+              x0,
+              y0,
+              x1.toDouble(),
+              y1.toDouble(),
+              x2.toDouble(),
+              y2.toDouble(),
+              x.toDouble(),
+              y.toDouble(),
+            );
+          }
 
         case PathCommandType.close:
           // In CFF Type 2 charstrings, paths are implicitly closed on next
@@ -189,16 +235,66 @@ class OtfWriter {
     charstringBytes.add(14); // endchar
 
     final bbox = minX.isFinite
-        ? BoundingBox(minX, minY, maxX, maxY)
+        ? BoundingBox(
+            minX.floorToDouble(),
+            minY.floorToDouble(),
+            maxX.ceilToDouble(),
+            maxY.ceilToDouble(),
+          )
         : const BoundingBox(0, 0, 0, 0);
 
     return _TransformedGlyph(
       name: glyph.name,
       codePoint: glyph.codePoint,
-      advanceWidth: config.unitsPerEm,
+      advanceWidth: advanceWidth,
       bbox: bbox,
       charstring: Uint8List.fromList(charstringBytes),
     );
+  }
+
+  /// Solves for $t \in (0, 1)$ where the derivative of the 1D cubic Bézier is 0.
+  static List<double> _cubicExtremaT(
+    double p0,
+    double p1,
+    double p2,
+    double p3,
+  ) {
+    // B'(t) = 3 * (a*t^2 + b*t + c)
+    final a = -p0 + 3.0 * p1 - 3.0 * p2 + p3;
+    final b = 2.0 * (p0 - 2.0 * p1 + p2);
+    final c = p1 - p0;
+
+    final roots = <double>[];
+    if (a.abs() < 1e-9) {
+      if (b.abs() > 1e-9) {
+        final t = -c / b;
+        if (t > 0.0 && t < 1.0) roots.add(t);
+      }
+      return roots;
+    }
+
+    final disc = b * b - 4.0 * a * c;
+    if (disc < 0.0) return roots;
+    final sqrtDisc = math.sqrt(disc);
+    final t1 = (-b + sqrtDisc) / (2.0 * a);
+    final t2 = (-b - sqrtDisc) / (2.0 * a);
+    if (t1 > 0.0 && t1 < 1.0) roots.add(t1);
+    if (t2 > 0.0 && t2 < 1.0 && (t2 - t1).abs() > 1e-9) roots.add(t2);
+    return roots;
+  }
+
+  static double _evalCubic1D(
+    double p0,
+    double p1,
+    double p2,
+    double p3,
+    double t,
+  ) {
+    final mt = 1.0 - t;
+    return mt * mt * mt * p0 +
+        3.0 * mt * mt * t * p1 +
+        3.0 * mt * t * t * p2 +
+        t * t * t * p3;
   }
 
   static BoundingBox _computeGlobalBBox(List<_TransformedGlyph> glyphs) {
@@ -267,6 +363,50 @@ class OtfWriter {
     }
   }
 
+  /// Encodes a floating-point number in CFF DICT real format (opcode 30, nibble-packed BCD).
+  static void _encodeCffDictReal(List<int> out, double value) {
+    out.add(30);
+    final str = value.toStringAsExponential(8);
+    final nibbles = <int>[];
+    for (var i = 0; i < str.length; i++) {
+      final ch = str[i];
+      if (ch == '+') continue;
+      if (ch == '0' && i > 0 && str[i - 1] == 'e') continue;
+      switch (ch) {
+        case '0':
+        case '1':
+        case '2':
+        case '3':
+        case '4':
+        case '5':
+        case '6':
+        case '7':
+        case '8':
+        case '9':
+          nibbles.add(ch.codeUnitAt(0) - 0x30);
+        case '.':
+          nibbles.add(0x0A);
+        case 'e':
+        case 'E':
+          if (i + 1 < str.length && str[i + 1] == '-') {
+            nibbles.add(0x0C); // E-
+            i++;
+          } else {
+            nibbles.add(0x0B); // E
+          }
+        case '-':
+          nibbles.add(0x0E);
+      }
+    }
+    nibbles.add(0x0F); // end of real number
+    if (nibbles.length.isOdd) {
+      nibbles.add(0x0F);
+    }
+    for (var i = 0; i < nibbles.length; i += 2) {
+      out.add((nibbles[i] << 4) | nibbles[i + 1]);
+    }
+  }
+
   static void _encodeCffDictInt32Fixed(List<int> out, int v) {
     out.add(29);
     out.add((v >> 24) & 0xFF);
@@ -320,14 +460,19 @@ class OtfWriter {
     final header = Uint8List.fromList(const [1, 0, 4, 4]);
 
     // 2. Name INDEX
-    final fontNameBytes = Uint8List.fromList(config.fontFamily.codeUnits);
+    final psFontName = config.fontFamily.replaceAll(
+      RegExp(r'[^A-Za-z0-9_-]'),
+      '',
+    );
+    final safePsName = psFontName.isEmpty ? 'AppIcons' : psFontName;
+    final fontNameBytes = Uint8List.fromList(safePsName.codeUnits);
     final nameIndex = _buildCffIndex([fontNameBytes]);
 
     // 3. String INDEX (custom strings start at SID 391)
     // SID 391: fontFamily
     // SID 392..: glyph names (excluding .notdef which is SID 0)
     final stringObjects = <Uint8List>[
-      fontNameBytes,
+      Uint8List.fromList(config.fontFamily.codeUnits),
       for (final g in glyphs.skip(1)) Uint8List.fromList(g.name.codeUnits),
     ];
     final stringIndex = _buildCffIndex(stringObjects);
@@ -377,6 +522,17 @@ class OtfWriter {
       _encodeCffDictInt(dict, fontBBox.maxX.round());
       _encodeCffDictInt(dict, fontBBox.maxY.round());
       dict.add(5);
+      // FontMatrix -> op 12 7 (only needed if unitsPerEm != 1000)
+      if (config.unitsPerEm != 1000 && config.unitsPerEm > 0) {
+        final scale = 1.0 / config.unitsPerEm;
+        _encodeCffDictReal(dict, scale);
+        _encodeCffDictInt(dict, 0);
+        _encodeCffDictInt(dict, 0);
+        _encodeCffDictReal(dict, scale);
+        _encodeCffDictInt(dict, 0);
+        _encodeCffDictInt(dict, 0);
+        dict.addAll(const [12, 7]);
+      }
       // CharstringType 2 -> 12 6
       _encodeCffDictInt(dict, 2);
       dict.addAll(const [12, 6]);
@@ -518,10 +674,12 @@ class OtfWriter {
     FontGeneratorConfig config,
   ) {
     final iconGlyphs = glyphs.skip(1).toList();
-    final firstChar =
-        iconGlyphs.isEmpty ? 0xFFFF : iconGlyphs.first.codePoint.clamp(0, 0xFFFF);
-    final lastChar =
-        iconGlyphs.isEmpty ? 0xFFFF : iconGlyphs.last.codePoint.clamp(0, 0xFFFF);
+    final firstChar = iconGlyphs.isEmpty
+        ? 0xFFFF
+        : iconGlyphs.first.codePoint.clamp(0, 0xFFFF);
+    final lastChar = iconGlyphs.isEmpty
+        ? 0xFFFF
+        : iconGlyphs.last.codePoint.clamp(0, 0xFFFF);
 
     final data = ByteData(96); // OS/2 version 4
     data.setUint16(0, 4); // version
@@ -567,14 +725,15 @@ class OtfWriter {
   }
 
   static Uint8List _buildCmapTable(List<_TransformedGlyph> glyphs) {
-    final bmpGlyphs = <_TransformedGlyph>[];
+    final bmpEntries = <MapEntry<int, int>>[];
     for (var i = 1; i < glyphs.length; i++) {
-      if (glyphs[i].codePoint <= 0xFFFF) {
-        bmpGlyphs.add(glyphs[i]);
+      final cp = glyphs[i].codePoint;
+      if (cp <= 0xFFFF) {
+        bmpEntries.add(MapEntry(cp, i));
       }
     }
 
-    final format4 = _buildCmapFormat4(bmpGlyphs);
+    final format4 = _buildCmapFormat4(bmpEntries);
     final format12 = _buildCmapFormat12(glyphs);
 
     // Header: version (2) + numTables (2) + 2 * encodingRecord (8 each) = 20 bytes
@@ -603,18 +762,25 @@ class OtfWriter {
     return builder.toBytes();
   }
 
-  static Uint8List _buildCmapFormat4(List<_TransformedGlyph> bmpGlyphs) {
-    // Each icon glyph gets its own 1-char segment (or contiguous segment) + final 0xFFFF segment
+  static Uint8List _buildCmapFormat4(List<MapEntry<int, int>> bmpEntries) {
+    // Merge contiguous (codePoint, glyphId) ranges into compact segments
     final startCodes = <int>[];
     final endCodes = <int>[];
     final idDeltas = <int>[];
 
-    for (var i = 0; i < bmpGlyphs.length; i++) {
-      final glyphIndex = i + 1;
-      final cp = bmpGlyphs[i].codePoint;
-      startCodes.add(cp);
-      endCodes.add(cp);
-      idDeltas.add((glyphIndex - cp) & 0xFFFF);
+    for (final entry in bmpEntries) {
+      final cp = entry.key;
+      final gid = entry.value;
+      final delta = (gid - cp) & 0xFFFF;
+      if (startCodes.isNotEmpty &&
+          endCodes.last + 1 == cp &&
+          idDeltas.last == delta) {
+        endCodes[endCodes.length - 1] = cp;
+      } else {
+        startCodes.add(cp);
+        endCodes.add(cp);
+        idDeltas.add(delta);
+      }
     }
 
     // Required sentinel segment
@@ -663,7 +829,24 @@ class OtfWriter {
   }
 
   static Uint8List _buildCmapFormat12(List<_TransformedGlyph> glyphs) {
-    final groupsCount = glyphs.length - 1;
+    final startCodes = <int>[];
+    final endCodes = <int>[];
+    final startGids = <int>[];
+
+    for (var i = 1; i < glyphs.length; i++) {
+      final cp = glyphs[i].codePoint;
+      if (startCodes.isNotEmpty &&
+          endCodes.last + 1 == cp &&
+          startGids.last + (endCodes.last - startCodes.last) + 1 == i) {
+        endCodes[endCodes.length - 1] = cp;
+      } else {
+        startCodes.add(cp);
+        endCodes.add(cp);
+        startGids.add(i);
+      }
+    }
+
+    final groupsCount = startCodes.length;
     final length = 16 + groupsCount * 12;
     final data = ByteData(length);
     data.setUint16(0, 12); // format 12
@@ -673,24 +856,24 @@ class OtfWriter {
     data.setUint32(12, groupsCount);
 
     var offset = 16;
-    for (var i = 1; i < glyphs.length; i++) {
-      final cp = glyphs[i].codePoint;
-      data.setUint32(offset, cp); // startCharCode
-      data.setUint32(offset + 4, cp); // endCharCode
-      data.setUint32(offset + 8, i); // startGlyphID
+    for (var i = 0; i < groupsCount; i++) {
+      data.setUint32(offset, startCodes[i]); // startCharCode
+      data.setUint32(offset + 4, endCodes[i]); // endCharCode
+      data.setUint32(offset + 8, startGids[i]); // startGlyphID
       offset += 12;
     }
     return data.buffer.asUint8List();
   }
 
   static Uint8List _buildNameTable(FontGeneratorConfig config) {
+    final psName = config.fontFamily.replaceAll(RegExp(r'[^A-Za-z0-9_-]'), '');
     final records = <int, String>{
       1: config.fontFamily, // Font Family
       2: 'Regular', // Font Subfamily
       3: '${config.fontFamily}-Regular', // Unique ID
       4: config.fontFamily, // Full Font Name
       5: 'Version 1.0', // Version
-      6: config.fontFamily.replaceAll(RegExp(r'[^A-Za-z0-9_-]'), ''), // PostScript Name
+      6: psName.isEmpty ? 'AppIcons' : psName, // PostScript Name
     };
 
     final encodedStrings = <Uint8List>[];
