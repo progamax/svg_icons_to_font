@@ -1,0 +1,9 @@
+# Dart / Flutter tools
+.dart_tool/
+build/
+pubspec.lock
+
+# OS / IDE files
+.DS_Store
+.idea/
+.vscode/
