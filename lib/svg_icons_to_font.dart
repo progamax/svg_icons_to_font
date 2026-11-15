@@ -2,8 +2,16 @@
 /// font and a corresponding Flutter `IconData` class.
 library svg_icons_to_font;
 
-export 'src/config.dart';
-export 'src/dart_class_generator.dart';
-export 'src/generator.dart';
-export 'src/otf_writer.dart';
-export 'src/svg_parser.dart';
+export 'src/config.dart' show FontGeneratorConfig;
+export 'src/dart_class_generator.dart' show DartClassGenerator;
+export 'src/generator.dart' show FontGenerationResult, SvgIconsToFontGenerator;
+export 'src/otf_writer.dart' show IconGlyph, OtfWriter;
+export 'src/svg_parser.dart'
+    show
+        BoundingBox,
+        Matrix2D,
+        ParsedSvg,
+        PathCommand,
+        PathCommandType,
+        Point2D,
+        SvgParser;

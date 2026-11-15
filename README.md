@@ -18,7 +18,7 @@ Add `svg_icons_to_font` to your `dev_dependencies` in `pubspec.yaml`:
 
 ```yaml
 dev_dependencies:
-  svg_icons_to_font: ^0.1.0
+  svg_icons_to_font: ^1.0.0
 ```
 
 Or activate it globally as a CLI tool:
