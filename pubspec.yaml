@@ -1,6 +1,6 @@
 name: svg_icons_to_font
 description: A pure Dart package and CLI tool that converts a folder of SVG icons into an OpenType (.otf) font file and generates a corresponding Flutter IconData Dart class.
-version: 0.1.0
+version: 1.0.0
 repository: https://github.com/progamax/svg_icons_to_font
 issue_tracker: https://github.com/progamax/svg_icons_to_font/issues
 topics:
